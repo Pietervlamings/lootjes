@@ -1,0 +1,121 @@
+const express = require('express');
+const bodyParser = require('body-parser');
+
+const app = express();
+app.use(bodyParser.json());
+
+function shuffleArray(array) {
+  for (let i = array.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [array[i], array[j]] = [array[j], array[i]];
+  }
+  return array;
+}
+
+function drawLots(participants, exclusions) {
+  const shuffled = shuffleArray([...participants]);
+  const results = [];
+  const assigned = new Set();
+
+  for (let i = 0; i < shuffled.length; i++) {
+    const giver = shuffled[i];
+    let receiverIndex = (i + 1) % shuffled.length;
+    let attempts = 0;
+    const maxAttempts = shuffled.length;
+
+    while (
+      (giver.email === shuffled[receiverIndex].email ||
+        assigned.has(shuffled[receiverIndex].email) ||
+        isExcluded(giver, shuffled[receiverIndex], exclusions)) &&
+      attempts < maxAttempts
+    ) {
+      receiverIndex = (receiverIndex + 1) % shuffled.length;
+      attempts++;
+    }
+
+    if (attempts === maxAttempts) {
+      // If we can't find a valid receiver, we need to reshuffle and try again
+      return drawLots(participants, exclusions);
+    }
+
+    results.push({
+      giver: giver,
+      receiver: shuffled[receiverIndex]
+    });
+    assigned.add(shuffled[receiverIndex].email);
+  }
+
+  return results;
+}
+
+function isExcluded(giver, receiver, exclusions) {
+  return exclusions.some(
+    exclusion =>
+      exclusion.giverEmail === giver.email &&
+      exclusion.excludedReceiverEmail === receiver.email
+  );
+}
+
+app.post('/api/draw-lots', (req, res) => {
+  const { organizer, groupName, participants, exclusions } = req.body;
+
+  if (!organizer || !groupName || !participants || participants.length < 3 || participants.length > 10) {
+    return res.status(400).json({ error: 'Invalid input data' });
+  }
+
+  const allParticipants = [organizer, ...participants];
+  
+  // Validate exclusions
+  if (exclusions) {
+    for (const exclusion of exclusions) {
+      if (!allParticipants.some(p => p.email === exclusion.giverEmail) ||
+          !allParticipants.some(p => p.email === exclusion.excludedReceiverEmail)) {
+        return res.status(400).json({ error: 'Invalid exclusion data' });
+      }
+    }
+  }
+
+  const drawResults = drawLots(allParticipants, exclusions || []);
+
+  // Hier nog verzenden van emails toevoegen
+  console.log('Draw results:', drawResults);
+
+  res.json({
+    message: 'De lootjes zijn getrokken',
+    results: drawResults
+  });
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
+
+// Test lootjes endpoint with exclusions
+const testData = {
+  organizer: { name: 'Bert', email: 'bert@sesamstraat.nl' },
+  groupName: 'Test Groep',
+  participants: [
+    { name: 'Pieter', email: 'pieter@pieter.nl' },
+    { name: 'Charlie', email: 'charlie@adventure.com' },
+    { name: 'Bert', email: 'bert@sesamstraat.nl' },
+    { name: 'Badger Badger', email: 'badger@mushroom.com' }
+  ],
+  exclusions: [
+    { giverEmail: 'pieter@pieter.nl', excludedReceiverEmail: 'bert@sesamstraat.nl' },
+    { giverEmail: 'charlie@adventure.com', excludedReceiverEmail: 'badger@mushroom.com' }
+  ]
+};
+
+console.log('Simulating a POST request to /api/draw-lots with exclusions');
+app.inject({
+  method: 'POST',
+  url: '/api/draw-lots',
+  payload: testData
+}, (err, response) => {
+  if (err) {
+    console.error('Error:', err);
+  } else {
+    console.log('Response:', response.payload);
+  }
+});
